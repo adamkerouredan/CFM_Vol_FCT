@@ -179,15 +179,23 @@ class FeatureEngineer:
         features["return_last_bar"]      = ret[self.return_cols[-1]]
 
         # --- Suppression des features redondantes ou sans signal ---
-        
+        # vol_median     : r=0.969 avec vol_mean (Pearson)
+        # vol_trend      : r=0.918 avec vol_linear_slope (Pearson)
+        # return_direction_bias : IC=-0.048 → sans signal
+        # return_last_bar       : IC=+0.002 → sans signal
+        # vol_range      : r=0.999 avec vol_max (Spearman) → détecté post-analyse
+        # vol_max        : r=0.956 avec vol_std (Spearman) → redondant avec vol_std
         features = features.drop(columns=[
-            "vol_median",           # r=0.97 avec vol_mean
-            "vol_trend",            # r=0.92 avec vol_linear_slope
-            "return_direction_bias",# r=-0.05 avec target
-            "return_last_bar",      # r=+0.00 avec target
+            "vol_median",
+            "vol_trend",
+            "return_direction_bias",
+            "return_last_bar",
+            "vol_range",
+            "vol_max",
         ])
 
         return features.reset_index(drop=True)
+
 
     def _compute_linear_slope(self, vol: pd.DataFrame) -> pd.Series:
         """
