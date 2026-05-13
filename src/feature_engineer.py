@@ -63,10 +63,10 @@ class FeatureEngineer:
         x_train_imputed = self._impute(self.x_train)
         x_test_imputed  = self._impute(self.x_test)
 
-        features_train = self._build_features(x_train_imputed)
-        features_test  = self._build_features(x_test_imputed)
+        self.features_train = self._build_features(x_train_imputed)
+        self.features_test  = self._build_features(x_test_imputed)
 
-        return features_train, features_test
+        return self.features_train, self.features_test
 
     # ------------------------------------------------------------------
     # Private : imputation

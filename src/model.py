@@ -190,38 +190,16 @@ class RidgePCAModel:
 
 class LightGBMModel:
     """
-    Pipeline LightGBM avec early stopping interne pour éviter
-    le leakage et l'overfitting.
-
-    LightGBM gère nativement les NaN et est invariant par
-    transformation monotone — pas de winsorisation ni de scaling
-    nécessaire.
+    Pipeline LightGBM avec early stopping interne et pondération
+    optionnelle pour optimiser le MAPE.
 
     Parameters
     ----------
-    n_estimators : int
-        Nombre maximum d'arbres (early stopping peut couper avant).
-    max_depth : int
-        Profondeur maximale par arbre.
-    num_leaves : int
-        Nombre maximum de feuilles par arbre.
-    learning_rate : float
-        Pas d'apprentissage.
-    min_child_samples : int
-        Nombre minimum d'observations par feuille (régularisation).
-    reg_alpha : float
-        Pénalisation L1 sur les feuilles.
-    reg_lambda : float
-        Pénalisation L2 sur les feuilles.
-    early_stopping_rounds : int
-        Nombre d'itérations sans amélioration avant arrêt.
-    internal_val_size : float
-        Fraction du train utilisée comme validation interne pour
-        l'early stopping (jamais le fold de test externe).
-    random_state : int
-        Seed pour la reproductibilité.
-    categorical_features : list, optional
-        Liste des indices des colonnes catégorielles.
+    [...]
+    sample_weight_fn : callable, optional
+        Fonction qui prend y_original et retourne les poids.
+        Pour MAPE : weights = 1 / y_original**2.
+        Default : None (poids uniformes = MSE classique).
     """
 
     def __init__(
@@ -237,6 +215,7 @@ class LightGBMModel:
         internal_val_size: float      = 0.15,
         random_state: int             = 42,
         categorical_features: list    = None,
+        sample_weight_fn              = None,
     ) -> None:
         self.n_estimators           = n_estimators
         self.max_depth              = max_depth
@@ -249,6 +228,7 @@ class LightGBMModel:
         self.internal_val_size      = internal_val_size
         self.random_state           = random_state
         self.categorical_features   = categorical_features
+        self.sample_weight_fn       = sample_weight_fn
 
         self.model_                 = None
         self.best_iteration_        = None
@@ -257,29 +237,57 @@ class LightGBMModel:
         self,
         X_train: np.ndarray,
         y_log_train: np.ndarray,
+        y_original_train: np.ndarray = None,
     ) -> "LightGBMModel":
         """
-        Entraînement avec early stopping sur un sous-fold interne.
+        Entraînement avec early stopping sur sous-fold interne.
+
+        y_original_train : optionnel, requis uniquement si
+        sample_weight_fn est défini.
         """
         import lightgbm as lgb
         from sklearn.model_selection import train_test_split
 
-        X_internal_train, X_internal_val, y_internal_train, y_internal_val = (
-            train_test_split(
-                X_train, y_log_train,
+        # Calcul des poids si demandé
+        if self.sample_weight_fn is not None:
+            if y_original_train is None:
+                raise ValueError(
+                    "y_original_train requis pour sample_weight_fn."
+                )
+            sample_weights = self.sample_weight_fn(y_original_train)
+        else:
+            sample_weights = None
+
+        # Split interne avec poids
+        if sample_weights is not None:
+            (X_internal_train, X_internal_val,
+             y_internal_train, y_internal_val,
+             w_internal_train, w_internal_val) = train_test_split(
+                X_train, y_log_train, sample_weights,
                 test_size    = self.internal_val_size,
                 random_state = self.random_state,
             )
-        )
+        else:
+            X_internal_train, X_internal_val, y_internal_train, y_internal_val = (
+                train_test_split(
+                    X_train, y_log_train,
+                    test_size    = self.internal_val_size,
+                    random_state = self.random_state,
+                )
+            )
+            w_internal_train = None
+            w_internal_val   = None
 
         train_set = lgb.Dataset(
             X_internal_train,
             label                 = y_internal_train,
+            weight                = w_internal_train,
             categorical_feature   = self.categorical_features,
         )
         val_set = lgb.Dataset(
             X_internal_val,
             label                 = y_internal_val,
+            weight                = w_internal_val,
             reference             = train_set,
             categorical_feature   = self.categorical_features,
         )
@@ -323,20 +331,10 @@ class LightGBMModel:
         feature_names: list,
         importance_type: str = "gain",
     ):
-        """
-        Retourne l'importance des features triée par ordre décroissant.
-
-        Parameters
-        ----------
-        feature_names : list
-            Noms des features dans l'ordre des colonnes de X.
-        importance_type : str
-            "gain" (par défaut) ou "split".
-        """
+        """Retourne l'importance des features."""
         import pandas as pd
         if self.model_ is None:
             raise RuntimeError("Le modèle n'est pas entraîné.")
-
         importances = self.model_.feature_importance(
             importance_type=importance_type
         )
@@ -348,7 +346,6 @@ class LightGBMModel:
             .sort_values("importance", ascending=False)
             .reset_index(drop=True)
         )
-    
 class HARLightGBMStackingModel:
     """
     Residual stacking : HAR-RV linéaire + LightGBM sur les résidus.
